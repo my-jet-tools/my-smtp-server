@@ -6,6 +6,15 @@ pub struct SmtpSubmitResult {
 }
 
 impl SmtpSubmitResult {
+    /// The mailgun http route already knows the id of the message, there is nothing to
+    /// parse out of a text answer.
+    pub fn from_parts(queue_id: Option<String>, smtp_response: String) -> Self {
+        Self {
+            queue_id,
+            smtp_response,
+        }
+    }
+
     pub fn new(smtp_response: String) -> Self {
         Self {
             queue_id: extract_queue_id(smtp_response.as_str()),

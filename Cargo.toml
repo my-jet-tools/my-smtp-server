@@ -23,6 +23,8 @@ rust-extensions = { tag = "0.1.5", git = "https://github.com/MyJetTools/rust-ext
     "with-tokio",
 ] }
 
+flurl = { tag = "0.7.0", git = "https://github.com/MyJetTools/fl-url.git" }
+
 mcp-server-middleware = { tag = "0.9.0", git = "https://github.com/my-ai-utils/mcp-server-middleware.git" }
 
 my-ai-agent = { tag = "0.1.0", git = "https://github.com/my-ai-utils/my-ai-agent.git", features = [

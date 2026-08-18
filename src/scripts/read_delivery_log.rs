@@ -66,6 +66,37 @@ async fn read_segment_files() -> Result<Vec<String>, String> {
     Ok(result)
 }
 
+/// A failed authentication is written into the log together with the command which was
+/// rejected - and an `AUTH PLAIN` command carries the login and the password as base64,
+/// which is not encryption. The log is handed out over endpoints which have no
+/// authentication, so the credentials are taken out of it.
+fn redact_credentials(record: &str) -> String {
+    const MARKERS: [&str; 2] = ["AUTH PLAIN ", "AUTH LOGIN "];
+
+    let mut result = record.to_string();
+
+    for marker in MARKERS {
+        while let Some(index) = result.find(marker) {
+            let secret_at = index + marker.len();
+
+            let secret_len = result[secret_at..]
+                .find(|c: char| c == '\\' || c == '"' || c.is_whitespace())
+                .unwrap_or(result.len() - secret_at);
+
+            if secret_len == 0 {
+                break;
+            }
+
+            result.replace_range(secret_at..secret_at + secret_len, "*** hidden ***");
+
+            // The marker itself is rewritten so the next iteration can not find it again.
+            result.replace_range(index..secret_at, "AUTH-REDACTED ");
+        }
+    }
+
+    result
+}
+
 async fn read_segment(file_name: &str) -> Result<Vec<String>, String> {
     let content = match tokio::fs::read(file_name).await {
         Ok(content) => content,
@@ -88,6 +119,31 @@ async fn read_segment(file_name: &str) -> Result<Vec<String>, String> {
     Ok(content
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string())
+        .map(redact_credentials)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_credentials;
+
+    #[test]
+    fn test_auth_credentials_are_redacted() {
+        let record = r#"{"content":"authenticating as postmaster@x-fine.online via SMTP AUTH PLAIN to ResolvedAddress: Command rejected Response { code: 535, content: \"Authentication failed\", command: Some(\"AUTH PLAIN AHBvc3RtYXN0ZXJAeC1maW5lLm9ubGluZQAuLi4=\\r\\n\") }"}"#;
+
+        let result = redact_credentials(record);
+
+        assert!(!result.contains("AHBvc3RtYXN0ZXJAeC1maW5lLm9ubGluZQAuLi4="));
+        assert!(result.contains("*** hidden ***"));
+        // The reason of the failure has to survive the redaction.
+        assert!(result.contains("Authentication failed"));
+        assert!(result.contains("535"));
+    }
+
+    #[test]
+    fn test_record_without_credentials_is_not_touched() {
+        let record = r#"{"type":"Delivery","response":{"code":250,"content":"OK"}}"#;
+
+        assert_eq!(redact_credentials(record).as_str(), record);
+    }
 }

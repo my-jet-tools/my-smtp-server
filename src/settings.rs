@@ -5,6 +5,51 @@ pub struct SettingsModel {
     pub smtp: SmtpSettingsModel,
     #[serde(default)]
     pub dkim: Vec<DkimSettingsModel>,
+    /// Optional. The http api of mailgun as an alternative route: it goes over 443, which
+    /// no provider blocks, unlike the smtp ports.
+    #[serde(default)]
+    pub mailgun_http: Option<MailgunHttpSettingsModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MailgunHttpSettingsModel {
+    /// The api key of the account - NOT the smtp password, they are different secrets.
+    pub api_key: String,
+
+    /// The domain as it is registered in mailgun.
+    pub domain: String,
+
+    /// 'eu' or 'us'. Default is 'us' - the same as the default of mailgun itself.
+    #[serde(default)]
+    pub region: Option<String>,
+
+    /// Overrides the url which is derived from the region.
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+impl MailgunHttpSettingsModel {
+    pub fn get_base_url(&self) -> String {
+        if let Some(base_url) = &self.base_url {
+            let base_url = base_url.trim().trim_end_matches('/');
+
+            if !base_url.is_empty() {
+                return base_url.to_string();
+            }
+        }
+
+        match self.get_region() {
+            "eu" => "https://api.eu.mailgun.net".to_string(),
+            _ => "https://api.mailgun.net".to_string(),
+        }
+    }
+
+    pub fn get_region(&self) -> &str {
+        match &self.region {
+            Some(region) => region.trim(),
+            None => "us",
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

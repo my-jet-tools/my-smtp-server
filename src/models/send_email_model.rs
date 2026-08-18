@@ -9,6 +9,9 @@ pub enum DeliveryMode {
     Relay,
     /// Straight to the mail server of the recipient, even when a relay is configured.
     Direct,
+    /// Over the http api of mailgun - port 443 instead of an smtp port. The mail server of
+    /// this container is not involved at all, so there is no local queue behind it.
+    MailgunHttp,
 }
 
 impl DeliveryMode {
@@ -22,8 +25,10 @@ impl DeliveryMode {
             "as_configured" => Ok(DeliveryMode::AsConfigured),
             "relay" => Ok(DeliveryMode::Relay),
             "direct" => Ok(DeliveryMode::Direct),
+            "mailgun_http" => Ok(DeliveryMode::MailgunHttp),
+            "http" => Ok(DeliveryMode::MailgunHttp),
             _ => Err(format!(
-                "Unknown delivery mode '{}'. It has to be 'relay', 'direct' or empty",
+                "Unknown delivery mode '{}'. It has to be 'relay', 'direct', 'mailgun_http' or empty",
                 src
             )),
         }
@@ -42,6 +47,20 @@ pub struct SendEmailModel {
     pub is_html: bool,
     pub attachments: Vec<EmailAttachmentModel>,
     pub delivery_mode: DeliveryMode,
+}
+
+impl SendEmailModel {
+    /// Everybody the message goes to - the http api of mailgun needs them as the envelope,
+    /// it does not read them out of the message.
+    pub fn get_all_recipients(&self) -> Vec<String> {
+        let mut result = Vec::with_capacity(self.to.len() + self.cc.len() + self.bcc.len());
+
+        result.extend(self.to.iter().cloned());
+        result.extend(self.cc.iter().cloned());
+        result.extend(self.bcc.iter().cloned());
+
+        result
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -51,6 +51,16 @@ smtp:
     user: postmaster@mydomain.com
     password: ...
 
+# Optional. The http api of mailgun as an alternative route - it goes over the port 443,
+# which no provider blocks, unlike the smtp ports. Used only by a request which asks for
+# the delivery mode 'mailgun_http'. The api key is NOT the smtp password - it is another
+# secret from the same panel.
+mailgun_http:
+  api_key: key-...
+  domain: mydomain.com
+  region: eu          # eu | us, default us
+  # base_url: https://api.eu.mailgun.net   # overrides what the region implies
+
 # Optional. When the list is empty - the mail is sent unsigned.
 dkim:
   - domain: mydomain.com
@@ -157,8 +167,11 @@ Swagger is available at `/swagger`.
 ```
 
 `delivery_mode` picks the route for one message: `relay` hands it over to the relay, `direct`
-delivers it to the mail server of the recipient bypassing the relay, and an empty value means
-what the settings say. It exists so that both routes can be tested on one installation - the
+delivers it to the mail server of the recipient bypassing the relay, `mailgun_http` sends it
+over the http api of mailgun (port 443 — for when the provider blocks every smtp port), and
+an empty value means what the settings say. The `mailgun_http` route does not go through the
+mail server of the container at all, so there is **no local queue behind it**: the answer of
+the api is final, and a failure comes back to the caller instead of being retried. It exists so that both routes can be tested on one installation - the
 service adds an `X-Delivery-Mode` header, and the mail server reads it, strips it and routes
 accordingly, so the header never reaches the recipient.
 

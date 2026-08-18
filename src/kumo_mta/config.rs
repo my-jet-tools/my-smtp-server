@@ -569,6 +569,7 @@ mod tests {
 
     fn create_test_settings(with_dkim: bool) -> SettingsModel {
         SettingsModel {
+            mailgun_http: None,
             smtp: SmtpSettingsModel {
                 my_hostname: "mail.mydomain.com".to_string(),
                 default_from_email: "no-reply@mydomain.com".to_string(),
