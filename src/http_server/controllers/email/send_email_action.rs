@@ -38,7 +38,7 @@ async fn handle_request(
 ) -> Result<HttpOkResult, HttpFailResult> {
     let email: SendEmailHttpModel = input_data.body.deserialize_json()?;
 
-    let result = crate::flows::send_email(&action.app, email.into()).await?;
+    let result = crate::flows::send_email(&action.app, email.try_into()?).await?;
 
     let response = SendEmailHttpResponse {
         queue_id: result.queue_id,
@@ -73,6 +73,10 @@ pub struct SendEmailHttpModel {
     pub is_html: Option<bool>,
     #[serde(default)]
     pub attachments: Option<Vec<EmailAttachmentHttpModel>>,
+    /// Optional. 'relay' - hand the message over to the relay, 'direct' - deliver it to the
+    /// mail server of the recipient bypassing the relay. Empty means what the settings say.
+    #[serde(default)]
+    pub delivery_mode: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, MyHttpObjectStructure)]

@@ -263,9 +263,39 @@ fn compile_message_received_handler(settings: &SettingsModel) -> String {
     let mut result = String::new();
 
     result.push_str("kumo.on('smtp_server_message_received', function(msg)\n");
+
+    // The order is load bearing: removing a header rewrites the whole header block of the
+    // message, so it has to happen BEFORE the signature is computed over it. Setting the
+    // metadata, on the other hand, never touches the message itself.
+    if !relay_routing.is_empty() {
+        result
+            .push_str(compile_delivery_mode_header(crate::scripts::DELIVERY_MODE_HEADER).as_str());
+    }
+
     result.push_str(dkim_signing.as_str());
     result.push_str(relay_routing.as_str());
     result.push_str("end)\n\n");
+
+    result
+}
+
+/// The client can ask for one particular route for one particular message - it is the way
+/// both routes can be tested on the same installation. The header is ours and must never
+/// reach the recipient, so it is stripped right after it is read.
+fn compile_delivery_mode_header(header_name: &str) -> String {
+    let mut result = String::new();
+
+    result.push_str(
+        format!(
+            "  local delivery_mode = msg:get_first_named_header_value '{}'\n\n",
+            header_name
+        )
+        .as_str(),
+    );
+    result.push_str("  if delivery_mode ~= nil then\n");
+    result.push_str(format!("    msg:remove_all_named_headers '{}'\n", header_name).as_str());
+    result.push_str("    delivery_mode = delivery_mode:lower()\n");
+    result.push_str("  end\n\n");
 
     result
 }
@@ -311,10 +341,25 @@ fn compile_relay_routing(relay: Option<&RelaySettingsModel>) -> String {
         return String::new();
     };
 
-    format!(
-        "  msg:set_meta('routing_domain', '{}')\n",
-        escape_lua_string(relay.host.trim())
-    )
+    let mut result = String::new();
+
+    result.push_str(
+        format!(
+            "  if delivery_mode ~= '{}' then\n",
+            crate::scripts::DELIVERY_MODE_DIRECT
+        )
+        .as_str(),
+    );
+    result.push_str(
+        format!(
+            "    msg:set_meta('routing_domain', '{}')\n",
+            escape_lua_string(relay.host.trim())
+        )
+        .as_str(),
+    );
+    result.push_str("  end\n");
+
+    result
 }
 
 /// Writes everything kumod needs: the directories, the dkim keys and the policy itself.
@@ -599,6 +644,32 @@ mod tests {
         assert!(!policy.contains("routing_domain', '"));
         assert!(policy.contains("enable_tls = 'Opportunistic'"));
         assert!(policy.contains("kumo.make_egress_path {"));
+    }
+
+    #[test]
+    fn test_delivery_mode_header_is_read_before_the_signature() {
+        let mut settings = create_test_settings(true);
+
+        settings.smtp.relay = Some(RelaySettingsModel {
+            host: "smtp.mailgun.org".to_string(),
+            port: None,
+            user: None,
+            password: None,
+        });
+
+        let policy = compile_policy_lua(&settings);
+
+        let removed_at = policy.find("remove_all_named_headers").unwrap();
+        let signed_at = policy.find("msg:dkim_sign").unwrap();
+        let routed_at = policy.find("set_meta('routing_domain'").unwrap();
+
+        // Removing a header rewrites the whole header block - after the signature is
+        // computed that can invalidate it.
+        assert!(removed_at < signed_at);
+        assert!(signed_at < routed_at);
+
+        // A message which asks for the direct delivery skips the relay.
+        assert!(policy.contains("if delivery_mode ~= 'direct' then"));
     }
 
     #[test]

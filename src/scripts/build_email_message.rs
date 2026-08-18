@@ -4,7 +4,32 @@ use lettre::{
     message::{Attachment, Mailbox, MultiPart, SinglePart, header::ContentType},
 };
 
-use crate::models::{EmailAttachmentModel, SendEmailError, SendEmailModel};
+use lettre::message::header::{Header, HeaderName, HeaderValue};
+
+use crate::models::{DeliveryMode, EmailAttachmentModel, SendEmailError, SendEmailModel};
+
+/// The way the choice of the route is passed to the mail server: it reads this header,
+/// decides where to send the message, and strips the header before the delivery - so it
+/// never reaches the recipient.
+pub const DELIVERY_MODE_HEADER: &str = "X-Delivery-Mode";
+pub const DELIVERY_MODE_DIRECT: &str = "direct";
+
+#[derive(Debug, Clone)]
+struct DeliveryModeHeader(String);
+
+impl Header for DeliveryModeHeader {
+    fn name() -> HeaderName {
+        HeaderName::new_from_ascii_str(DELIVERY_MODE_HEADER)
+    }
+
+    fn parse(src: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self(src.to_string()))
+    }
+
+    fn display(&self) -> HeaderValue {
+        HeaderValue::new(Self::name(), self.0.clone())
+    }
+}
 
 pub fn build_email_message(
     model: SendEmailModel,
@@ -22,6 +47,10 @@ pub fn build_email_message(
     let mut builder = Message::builder()
         .from(from)
         .subject(model.subject.as_str());
+
+    if model.delivery_mode == DeliveryMode::Direct {
+        builder = builder.header(DeliveryModeHeader(DELIVERY_MODE_DIRECT.to_string()));
+    }
 
     for email in model.to.iter() {
         builder = builder.to(parse_mailbox(email, "to")?);

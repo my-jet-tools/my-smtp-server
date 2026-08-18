@@ -1,11 +1,16 @@
 use crate::{
     http_server::controllers::email::{EmailAttachmentHttpModel, SendEmailHttpModel},
-    models::{EmailAttachmentModel, SendEmailModel},
+    models::{DeliveryMode, EmailAttachmentModel, SendEmailError, SendEmailModel},
 };
 
-impl From<SendEmailHttpModel> for SendEmailModel {
-    fn from(src: SendEmailHttpModel) -> Self {
-        Self {
+impl TryFrom<SendEmailHttpModel> for SendEmailModel {
+    type Error = SendEmailError;
+
+    fn try_from(src: SendEmailHttpModel) -> Result<Self, Self::Error> {
+        let delivery_mode = DeliveryMode::parse(src.delivery_mode.as_deref())
+            .map_err(SendEmailError::InvalidEmailModel)?;
+
+        Ok(Self {
             from_email: src.from_email,
             from_name: src.from_name,
             to: src.to,
@@ -18,7 +23,8 @@ impl From<SendEmailHttpModel> for SendEmailModel {
                 Some(attachments) => attachments.into_iter().map(|itm| itm.into()).collect(),
                 None => vec![],
             },
-        }
+            delivery_mode,
+        })
     }
 }
 

@@ -156,7 +156,13 @@ Swagger is available at `/swagger`.
 }
 ```
 
-`from_email`, `from_name`, `cc`, `bcc`, `is_html` and `attachments` are optional. When `from_email`
+`delivery_mode` picks the route for one message: `relay` hands it over to the relay, `direct`
+delivers it to the mail server of the recipient bypassing the relay, and an empty value means
+what the settings say. It exists so that both routes can be tested on one installation - the
+service adds an `X-Delivery-Mode` header, and the mail server reads it, strips it and routes
+accordingly, so the header never reaches the recipient.
+
+`from_email`, `from_name`, `cc`, `bcc`, `is_html`, `attachments` and `delivery_mode` are optional. When `from_email`
 is not set — `smtp.default_from_email` from the settings is used. Both `user@domain.com` and
 `User Name <user@domain.com>` are accepted in every address field.
 
@@ -188,7 +194,7 @@ claude mcp add --transport http my-smtp-sender http://{host}:8000/mcp
 
 | Tool | What it is for |
 |---|---|
-| `send_email` | Sends an email. The same flow the rest api uses. |
+| `send_email` | Sends an email. The same flow the rest api uses. `delivery_mode` picks `relay` or `direct` for one message. |
 | `get_mail_server_status` | Is the mail server alive, how it signs and delivers, what is in the queues. |
 | `get_mail_server_output` | Last lines of the stdout/stderr of the mail server — where the reason of a failed start up or of a deferred delivery is. |
 | `get_mail_server_policy` | The configuration compiled out of the settings, as the mail server got it. |
@@ -196,6 +202,7 @@ claude mcp add --transport http my-smtp-sender http://{host}:8000/mcp
 | `check_outbound_smtp` | Opens a tcp connection to a mail server and reads its greeting — the way to tell whether the provider blocks the outgoing port 25. |
 | `get_checkup` | The whole check-up in one call: process, port, PTR, SPF, DKIM, DMARC. The first thing to look at when the mail does not arrive. |
 | `get_dkim_dns_records` | The TXT records to publish for the keys the mail server actually signs with. |
+| `get_delivery_log` | What happened to each message after it was accepted, and what the receiving mail server answered. |
 
 Neither the rest api nor the MCP endpoint has any authentication: the service is meant to sit
 in a private network. Do not expose the port 8000 to the internet.
