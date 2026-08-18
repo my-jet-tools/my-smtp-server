@@ -92,7 +92,7 @@ pub fn compile_policy_lua(settings: &SettingsModel) -> String {
     );
     result.push_str("end)\n\n");
 
-    result.push_str(compile_dkim_signing_handler(&settings.dkim).as_str());
+    result.push_str(compile_message_received_handler(settings).as_str());
 
     result.push_str(compile_queue_config_handler(smtp).as_str());
     result.push_str(compile_egress_path_handler(smtp).as_str());
@@ -103,6 +103,7 @@ pub fn compile_policy_lua(settings: &SettingsModel) -> String {
 fn compile_queue_config_handler(smtp: &SmtpSettingsModel) -> String {
     let mut result = String::new();
 
+    // The real arity of the event is (domain, tenant, campaign, routing_domain).
     result.push_str(
         "kumo.on('get_queue_config', function(domain, tenant, campaign, routing_domain)\n",
     );
@@ -116,22 +117,8 @@ fn compile_queue_config_handler(smtp: &SmtpSettingsModel) -> String {
     );
     result.push_str("    retry_interval = '20 minutes',\n");
     result.push_str("    max_retry_interval = '2 hours',\n");
-
-    if let Some(relay) = &smtp.relay {
-        // Everything goes to the relay instead of the mail server of the recipient.
-        result.push_str("    protocol = {\n");
-        result.push_str("      smtp_client = {\n");
-        result.push_str(
-            format!(
-                "        mx_list = {{ '{}' }},\n",
-                escape_lua_string(relay.host.trim())
-            )
-            .as_str(),
-        );
-        result.push_str("      },\n");
-        result.push_str("    },\n");
-    }
-
+    // The relay is not configured here: the routing_domain of the message already replaces
+    // the mx resolution, and it keeps the recipient domain in the name of the queue.
     result.push_str("  }\n");
     result.push_str("end)\n\n");
 
@@ -139,29 +126,39 @@ fn compile_queue_config_handler(smtp: &SmtpSettingsModel) -> String {
 }
 
 fn compile_egress_path_handler(smtp: &SmtpSettingsModel) -> String {
+    let ehlo_domain = escape_lua_string(smtp.my_hostname.trim());
+
     let mut result = String::new();
 
+    // The real arity of the event is (routing_domain, egress_source, site_name). With the
+    // relay the first argument is the host of the relay, which is how the credentials are
+    // scoped to it and never sent anywhere else.
     result.push_str(
         "kumo.on('get_egress_path_config', function(routing_domain, egress_source, site_name)\n",
     );
-    result.push_str("  return kumo.make_egress_path {\n");
-    result.push_str(
-        format!(
-            "    ehlo_domain = '{}',\n",
-            escape_lua_string(smtp.my_hostname.trim())
-        )
-        .as_str(),
-    );
 
-    match &smtp.relay {
-        Some(relay) => result.push_str(compile_relay_egress_path(relay).as_str()),
-        None => {
-            // Encrypted when the mail server of the recipient supports it, plain text when
-            // it does not - the same behaviour any normal mail server has.
-            result.push_str("    enable_tls = 'Opportunistic',\n");
-        }
+    if let Some(relay) = &smtp.relay {
+        let relay_host = escape_lua_string(relay.host.trim());
+
+        result.push_str(
+            format!(
+                "  if routing_domain == '{}' or site_name == '{}' then\n",
+                relay_host, relay_host
+            )
+            .as_str(),
+        );
+        result.push_str("    return kumo.make_egress_path {\n");
+        result.push_str(format!("      ehlo_domain = '{}',\n", ehlo_domain).as_str());
+        result.push_str(compile_relay_egress_path(relay).as_str());
+        result.push_str("    }\n");
+        result.push_str("  end\n\n");
     }
 
+    result.push_str("  return kumo.make_egress_path {\n");
+    result.push_str(format!("    ehlo_domain = '{}',\n", ehlo_domain).as_str());
+    // Encrypted when the mail server of the recipient supports it, plain text when it does
+    // not - the same behaviour any normal mail server has.
+    result.push_str("    enable_tls = 'Opportunistic',\n");
     result.push_str("  }\n");
     result.push_str("end)\n");
 
@@ -171,10 +168,13 @@ fn compile_egress_path_handler(smtp: &SmtpSettingsModel) -> String {
 fn compile_relay_egress_path(relay: &RelaySettingsModel) -> String {
     let mut result = String::new();
 
-    result.push_str(format!("    smtp_port = {},\n", relay.get_port()).as_str());
+    result.push_str(format!("      smtp_port = {},\n", relay.get_port()).as_str());
     // The relay is a known server which is reached over the internet - the credentials
-    // must never travel in plain text.
-    result.push_str("    enable_tls = 'Required',\n");
+    // must never travel in plain text. kumod refuses AUTH PLAIN without tls anyway.
+    result.push_str("      enable_tls = 'Required',\n");
+    // Both are about the mail server of the recipient, which is not who we are talking to.
+    result.push_str("      enable_mta_sts = false,\n");
+    result.push_str("      enable_dane = false,\n");
 
     if !relay.has_authentication() {
         return result;
@@ -183,7 +183,7 @@ fn compile_relay_egress_path(relay: &RelaySettingsModel) -> String {
     if let Some(user) = relay.get_user() {
         result.push_str(
             format!(
-                "    smtp_auth_plain_username = '{}',\n",
+                "      smtp_auth_plain_username = '{}',\n",
                 escape_lua_string(user)
             )
             .as_str(),
@@ -191,9 +191,11 @@ fn compile_relay_egress_path(relay: &RelaySettingsModel) -> String {
     }
 
     if let Some(password) = relay.get_password() {
+        // A bare string here would be read as a PATH to a file with the password - an
+        // inline value has to be wrapped into key_data.
         result.push_str(
             format!(
-                "    smtp_auth_plain_password = {{ key_data = '{}' }},\n",
+                "      smtp_auth_plain_password = {{ key_data = '{}' }},\n",
                 escape_lua_string(password)
             )
             .as_str(),
@@ -225,7 +227,28 @@ fn compile_dkim_keys_table(dkim_settings: &[DkimSettingsModel]) -> String {
     result
 }
 
-fn compile_dkim_signing_handler(dkim_settings: &[DkimSettingsModel]) -> String {
+/// Everything which has to happen to a message the moment it is accepted: it is signed,
+/// and - when a relay is configured - it is pointed at the relay instead of the mail
+/// server of the recipient.
+fn compile_message_received_handler(settings: &SettingsModel) -> String {
+    let dkim_signing = compile_dkim_signing(&settings.dkim);
+    let relay_routing = compile_relay_routing(settings.smtp.relay.as_ref());
+
+    if dkim_signing.is_empty() && relay_routing.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::new();
+
+    result.push_str("kumo.on('smtp_server_message_received', function(msg)\n");
+    result.push_str(dkim_signing.as_str());
+    result.push_str(relay_routing.as_str());
+    result.push_str("end)\n\n");
+
+    result
+}
+
+fn compile_dkim_signing(dkim_settings: &[DkimSettingsModel]) -> String {
     if dkim_settings.is_empty() {
         return String::new();
     }
@@ -238,27 +261,38 @@ fn compile_dkim_signing_handler(dkim_settings: &[DkimSettingsModel]) -> String {
 
     let mut result = String::new();
 
-    result.push_str("kumo.on('smtp_server_message_received', function(msg)\n");
     // The domain of the From header is the one DMARC aligns the signature against - that
     // is why the key is picked by it and not by the envelope sender.
     result.push_str("  local from = msg:from_header()\n");
-    result.push_str("  if from == nil then\n");
-    result.push_str("    return\n");
+    result.push_str("  local dkim = nil\n\n");
+    result.push_str("  if from ~= nil then\n");
+    result.push_str("    dkim = DKIM_KEYS[from.domain]\n");
     result.push_str("  end\n\n");
-    result.push_str("  local dkim = DKIM_KEYS[from.domain]\n");
-    result.push_str("  if dkim == nil then\n");
     // No key for this domain - the mail still goes out, just unsigned.
-    result.push_str("    return\n");
+    result.push_str("  if dkim ~= nil then\n");
+    result.push_str("    msg:dkim_sign(kumo.dkim.rsa_sha256_signer {\n");
+    result.push_str("      domain = from.domain,\n");
+    result.push_str("      selector = dkim.selector,\n");
+    result.push_str(format!("      headers = {{ {} }},\n", headers).as_str());
+    result.push_str("      key = dkim.key,\n");
+    result.push_str("    })\n");
     result.push_str("  end\n\n");
-    result.push_str("  msg:dkim_sign(kumo.dkim.rsa_sha256_signer {\n");
-    result.push_str("    domain = from.domain,\n");
-    result.push_str("    selector = dkim.selector,\n");
-    result.push_str(format!("    headers = {{ {} }},\n", headers).as_str());
-    result.push_str("    key = dkim.key,\n");
-    result.push_str("  })\n");
-    result.push_str("end)\n\n");
 
     result
+}
+
+/// The documented way to hand everything over to one smart host: the routing domain of the
+/// message replaces the mx resolution, while the recipient domain stays in the name of the
+/// queue - so the retries and the statistics are still per recipient domain.
+fn compile_relay_routing(relay: Option<&RelaySettingsModel>) -> String {
+    let Some(relay) = relay else {
+        return String::new();
+    };
+
+    format!(
+        "  msg:set_meta('routing_domain', '{}')\n",
+        escape_lua_string(relay.host.trim())
+    )
 }
 
 /// Writes everything kumod needs: the directories, the dkim keys and the policy itself.
@@ -523,7 +557,12 @@ mod tests {
 
         let policy = compile_policy_lua(&settings);
 
-        assert!(policy.contains("mx_list = { 'smtp.mailgun.org' }"));
+        // The relay is applied by pointing the message at it, not by an mx_list - the
+        // protocol block of the queue config is exactly what kumod refused to parse.
+        assert!(policy.contains("msg:set_meta('routing_domain', 'smtp.mailgun.org')"));
+        assert!(!policy.contains("mx_list"));
+        assert!(!policy.contains("protocol"));
+        assert!(policy.contains("if routing_domain == 'smtp.mailgun.org'"));
         assert!(policy.contains("smtp_port = 587"));
         assert!(policy.contains("enable_tls = 'Required'"));
         assert!(policy.contains("smtp_auth_plain_username = 'postmaster@mydomain.com'"));
@@ -534,7 +573,7 @@ mod tests {
     fn test_policy_without_relay_delivers_directly() {
         let policy = compile_policy_lua(&create_test_settings(false));
 
-        assert!(!policy.contains("mx_list"));
+        assert!(!policy.contains("routing_domain', '"));
         assert!(policy.contains("enable_tls = 'Opportunistic'"));
         assert!(policy.contains("kumo.make_egress_path {"));
     }
