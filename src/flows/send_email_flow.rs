@@ -13,10 +13,21 @@ pub async fn send_email(
     app: &Arc<AppContext>,
     mut model: SendEmailModel,
 ) -> Result<SmtpSubmitResult, SendEmailError> {
-    let (relay_is_configured, mailgun_http) = app
+    let (relay_is_configured, mailgun_http, default_delivery_mode) = app
         .settings_reader
-        .use_settings(|settings| (settings.smtp.relay.is_some(), settings.mailgun_http.clone()))
+        .use_settings(|settings| {
+            (
+                settings.smtp.relay.is_some(),
+                settings.mailgun_http.clone(),
+                settings.get_default_delivery_mode(),
+            )
+        })
         .await;
+
+    // A request which says nothing about the route takes the one the settings imply.
+    if model.delivery_mode == DeliveryMode::AsConfigured {
+        model.delivery_mode = default_delivery_mode;
+    }
 
     if model.delivery_mode == DeliveryMode::Relay && !relay_is_configured {
         return Err(SendEmailError::InvalidEmailModel(

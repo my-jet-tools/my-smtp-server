@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::models::DeliveryMode;
+
 #[derive(my_settings_reader::SettingsModel, Serialize, Deserialize, Debug, Clone)]
 pub struct SettingsModel {
     pub smtp: SmtpSettingsModel,
@@ -113,6 +115,28 @@ impl DkimSettingsModel {
 impl SettingsModel {
     pub fn get_dkim_enabled(&self) -> bool {
         !self.dkim.is_empty()
+    }
+
+    /// The route a message takes when the request does not ask for a particular one. It is
+    /// decided by which section is present, so there is no third place where the same
+    /// choice could be spelled out differently:
+    ///
+    /// * `mailgun_http` is set - the http api of mailgun,
+    /// * otherwise `smtp.relay` is set - the relay over smtp,
+    /// * otherwise straight to the mail server of the recipient.
+    ///
+    /// When both are set, the http api wins - configuring it is the deliberate act, and the
+    /// relay stays available for a request which asks for it explicitly.
+    pub fn get_default_delivery_mode(&self) -> DeliveryMode {
+        if self.mailgun_http.is_some() {
+            return DeliveryMode::MailgunHttp;
+        }
+
+        if self.smtp.relay.is_some() {
+            return DeliveryMode::Relay;
+        }
+
+        DeliveryMode::Direct
     }
 }
 
