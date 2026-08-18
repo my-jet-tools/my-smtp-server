@@ -98,6 +98,9 @@ services:
       # The queue of the mail server. It MUST survive the restart of the container -
       # otherwise the mail which is accepted but not delivered yet is lost.
       - ./spool:/var/spool/kumomta
+      # The delivery log - what the receiving mail servers answered. Without the volume it
+      # is wiped on every redeploy, which is when it is needed most.
+      - ./logs:/var/log/kumomta
     # kumod sizes its memory budget from the cgroup limit of the container - give it one,
     # otherwise it takes 75% of the RAM of the whole host as its reference point.
     mem_limit: 1g

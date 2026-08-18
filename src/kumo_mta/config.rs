@@ -83,13 +83,13 @@ pub fn compile_policy_lua(settings: &SettingsModel) -> String {
     result.push_str(format!("    trusted_hosts = {{ '{}', '::1' }},\n", LOCAL_SMTP_HOST).as_str());
     result.push_str("  }\n\n");
 
-    result.push_str(
-        format!(
-            "  kumo.configure_local_logs {{ log_dir = '{}' }}\n",
-            LOG_DIR
-        )
-        .as_str(),
-    );
+    // Without a short segment duration the delivery records stay in the buffer of the mail
+    // server for hours, and the log is empty exactly when it is needed - right after a
+    // message failed to go out.
+    result.push_str("  kumo.configure_local_logs {\n");
+    result.push_str(format!("    log_dir = '{}',\n", LOG_DIR).as_str());
+    result.push_str("    max_segment_duration = '10 seconds',\n");
+    result.push_str("  }\n");
     result.push_str("end)\n\n");
 
     result.push_str(compile_message_received_handler(settings).as_str());
@@ -200,6 +200,28 @@ fn compile_relay_egress_path(relay: &RelaySettingsModel) -> String {
             )
             .as_str(),
         );
+    }
+
+    result
+}
+
+/// The policy carries the password of the relay, and the endpoints which show the policy
+/// have no authentication - so whatever is handed out has the secrets taken out of it.
+pub fn redact_policy_secrets(policy: &str) -> String {
+    const SECRET_PREFIX: &str = "key_data = '";
+
+    let mut result = String::new();
+
+    for line in policy.lines() {
+        match line.find(SECRET_PREFIX) {
+            Some(index) => {
+                result.push_str(&line[..index + SECRET_PREFIX.len()]);
+                result.push_str("*** hidden ***' }");
+            }
+            None => result.push_str(line),
+        }
+
+        result.push('\n');
     }
 
     result
@@ -535,6 +557,7 @@ mod tests {
         println!("{}", policy);
 
         assert!(policy.contains("kumo.define_spool { name = 'data'"));
+        assert!(policy.contains("max_segment_duration = '10 seconds'"));
         assert!(policy.contains("kumo.start_esmtp_listener"));
         assert!(policy.contains("listen = '127.0.0.1:25'"));
         assert!(policy.contains("hostname = 'mail.mydomain.com'"));

@@ -4,7 +4,10 @@ use mcp_server_middleware::*;
 
 use serde::*;
 
-use crate::{app::AppContext, kumo_mta::POLICY_FILE};
+use crate::{
+    app::AppContext,
+    kumo_mta::{POLICY_FILE, redact_policy_secrets},
+};
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
 pub struct GetMailServerPolicyInputData {}
