@@ -270,26 +270,7 @@ pub async fn write_kumo_mta_config(settings: &SettingsModel) -> Result<(), Strin
     create_directory(LOG_DIR).await?;
 
     for dkim in settings.dkim.iter() {
-        create_directory(get_dkim_keys_directory(dkim).as_str()).await?;
-
-        let private_key_file = get_dkim_private_key_file(dkim);
-
-        let mut private_key = dkim.private_key.trim().to_string();
-        private_key.push('\n');
-
-        write_file(private_key_file.as_str(), private_key.as_str()).await?;
-
-        if let Err(err) = tokio::fs::set_permissions(
-            private_key_file.as_str(),
-            std::fs::Permissions::from_mode(0o600),
-        )
-        .await
-        {
-            return Err(format!(
-                "Can not set permissions of the file '{}'. Err: {}",
-                private_key_file, err
-            ));
-        }
+        copy_dkim_private_key(dkim).await?;
     }
 
     write_file(POLICY_FILE, compile_policy_lua(settings).as_str()).await?;
@@ -298,6 +279,54 @@ pub async fn write_kumo_mta_config(settings: &SettingsModel) -> Result<(), Strin
     // everything kumod has to read or write has to belong to it.
     for path in [DKIM_KEYS_DIR, SPOOL_DATA_DIR, SPOOL_META_DIR, LOG_DIR] {
         change_owner_to_kumod(path).await?;
+    }
+
+    Ok(())
+}
+
+/// The key file belongs to whoever mounted it into the container - it is copied into the
+/// own directory of the mail server instead of being touched in place, because kumod reads
+/// it after it has dropped its privileges to the kumod user, and changing the owner of a
+/// bind mounted file would change it on the host as well.
+async fn copy_dkim_private_key(dkim: &DkimSettingsModel) -> Result<(), String> {
+    let source_file = dkim.get_private_key_path();
+
+    let private_key = match tokio::fs::read_to_string(source_file.as_str()).await {
+        Ok(private_key) => private_key,
+        Err(err) => {
+            return Err(format!(
+                "Can not read the dkim private key of the domain '{}' from the file '{}'. Err: {}",
+                dkim.domain, source_file, err
+            ));
+        }
+    };
+
+    if private_key.trim().is_empty() {
+        return Err(format!(
+            "The dkim private key file '{}' of the domain '{}' is empty",
+            source_file, dkim.domain
+        ));
+    }
+
+    create_directory(get_dkim_keys_directory(dkim).as_str()).await?;
+
+    let destination_file = get_dkim_private_key_file(dkim);
+
+    let mut private_key = private_key.trim().to_string();
+    private_key.push('\n');
+
+    write_file(destination_file.as_str(), private_key.as_str()).await?;
+
+    if let Err(err) = tokio::fs::set_permissions(
+        destination_file.as_str(),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .await
+    {
+        return Err(format!(
+            "Can not set permissions of the file '{}'. Err: {}",
+            destination_file, err
+        ));
     }
 
     Ok(())
@@ -371,7 +400,7 @@ mod tests {
                 vec![DkimSettingsModel {
                     domain: "mydomain.com".to_string(),
                     selector: "mail".to_string(),
-                    private_key: "-----BEGIN RSA PRIVATE KEY-----".to_string(),
+                    private_key_path: "/etc/my-smtp-sender/dkim/mydomain.com.key".to_string(),
                 }]
             } else {
                 vec![]

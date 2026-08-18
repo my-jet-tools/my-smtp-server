@@ -55,13 +55,20 @@ smtp:
 dkim:
   - domain: mydomain.com
     selector: mail
-    private_key: |
-      -----BEGIN RSA PRIVATE KEY-----
-      ...
-      -----END RSA PRIVATE KEY-----
+    # Path of the file with the private key, not the key itself. `~` and the
+    # environment variables are resolved.
+    private_key_path: /etc/my-smtp-sender/dkim/mydomain.com.key
 ```
 
-The public part of each dkim key has to be published as a TXT record of
+The key file itself is mounted into the container and stays out of the settings. On start up
+the service copies it into the own directory of the mail server (`/opt/kumomta/etc/dkim/...`)
+and gives it to the `kumod` user - the mounted file is neither modified nor chowned, because
+on a bind mount that would change the owner of the file on the host as well.
+
+A missing or empty key file stops the start up with the path in the error message, rather
+than sending the mail unsigned.
+
+The public part of each key has to be published as a TXT record of
 `{selector}._domainkey.{domain}`.
 
 ## Building the image
@@ -86,6 +93,8 @@ services:
     volumes:
       # The settings model.
       - ~/.my-smtp-sender:/root/.my-smtp-sender:ro
+      # The dkim private keys, at the paths the settings point at.
+      - ./dkim:/etc/my-smtp-sender/dkim:ro
       # The queue of the mail server. It MUST survive the restart of the container -
       # otherwise the mail which is accepted but not delivered yet is lost.
       - ./spool:/var/spool/kumomta

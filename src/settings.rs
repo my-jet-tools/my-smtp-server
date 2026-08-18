@@ -52,9 +52,17 @@ pub struct RelaySettingsModel {
 pub struct DkimSettingsModel {
     pub domain: String,
     pub selector: String,
-    /// Private key in PEM format. The matching public key has to be published as
-    /// a TXT record of {selector}._domainkey.{domain}
-    pub private_key: String,
+    /// Path of the file with the private key in PEM format - the file itself is never
+    /// a part of the settings. `~` and the environment variables are resolved.
+    /// The matching public key has to be published as a TXT record of
+    /// {selector}._domainkey.{domain}
+    pub private_key_path: String,
+}
+
+impl DkimSettingsModel {
+    pub fn get_private_key_path(&self) -> String {
+        rust_extensions::file_utils::format_path(self.private_key_path.trim()).to_string()
+    }
 }
 
 impl SettingsModel {
