@@ -42,9 +42,24 @@ pub struct SendEmailInputData {
     pub bcc: Option<Vec<String>>,
 
     #[property(
-        description = "'relay' - hand the message over to the relay, 'direct' - deliver it straight to the mail server of the recipient, bypassing the relay. Empty means what the settings say. Use it to test both routes on the same installation"
+        description = "'relay' - hand the message over to the relay, 'direct' - deliver it straight to the mail server of the recipient, bypassing the relay, 'mailgun_http' - send it over the http api of mailgun. Empty means what the settings imply. Use it to test every route on the same installation"
     )]
     pub delivery_mode: Option<String>,
+
+    #[property(description = "Files to attach to the email")]
+    pub attachments: Option<Vec<EmailAttachmentModel>>,
+}
+
+#[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
+pub struct EmailAttachmentModel {
+    #[property(description = "Name of the file as the recipient sees it")]
+    pub file_name: String,
+
+    #[property(description = "Mime type of the file, for example 'application/pdf'")]
+    pub content_type: String,
+
+    #[property(description = "Content of the file, base64 encoded")]
+    pub base64_content: String,
 }
 
 #[derive(ApplyJsonSchema, Debug, Serialize, Deserialize)]
@@ -104,7 +119,17 @@ impl TryFrom<SendEmailInputData> for SendEmailModel {
             subject: src.subject,
             body: src.body,
             is_html: src.is_html.unwrap_or(false),
-            attachments: vec![],
+            attachments: match src.attachments {
+                Some(attachments) => attachments
+                    .into_iter()
+                    .map(|itm| crate::models::EmailAttachmentModel {
+                        file_name: itm.file_name,
+                        content_type: itm.content_type,
+                        base64_content: itm.base64_content,
+                    })
+                    .collect(),
+                None => vec![],
+            },
             delivery_mode,
         })
     }

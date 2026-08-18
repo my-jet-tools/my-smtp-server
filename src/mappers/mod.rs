@@ -1,1 +1,2 @@
+mod send_email_grpc_model_mapper;
 mod send_email_http_model_mapper;

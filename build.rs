@@ -8,4 +8,7 @@ fn main() {
         .generate_github_ci_file()
         .with_ci_test()
         .build();
+
+    // The proto file lives in this repository - there is nothing to sync from elsewhere.
+    ci_utils::compile_protos("proto/MySmtpSender.proto");
 }

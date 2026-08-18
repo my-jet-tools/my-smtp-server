@@ -1,0 +1,52 @@
+syntax = "proto3";
+package my_smtp_sender;
+
+import "google/protobuf/empty.proto";
+
+message EmailAttachmentGrpcModel {
+    // Name of the file as the recipient sees it.
+    string FileName = 1;
+    // Mime type, for example 'application/pdf'.
+    string ContentType = 2;
+    // Content of the file, base64 encoded.
+    string Base64Content = 3;
+}
+
+message SendEmailGrpcRequest {
+    // Both 'user@domain.com' and 'User Name <user@domain.com>' are accepted in every
+    // address field.
+    repeated string To = 1;
+    string Subject = 2;
+    string Body = 3;
+    // When true - the body is sent as text/html, otherwise as text/plain.
+    bool IsHtml = 4;
+    // When it is empty - the default sender from the settings is used.
+    optional string FromEmail = 5;
+    optional string FromName = 6;
+    repeated string Cc = 7;
+    repeated string Bcc = 8;
+    repeated EmailAttachmentGrpcModel Attachments = 9;
+    // 'relay', 'direct' or 'mailgun_http'. Empty means what the settings imply.
+    optional string DeliveryMode = 10;
+}
+
+message SendEmailGrpcResponse {
+    // Id of the message inside the queue of the mail server. Empty when the route which
+    // was used has no queue of its own.
+    optional string QueueId = 1;
+    // The answer of whoever accepted the message.
+    string Response = 2;
+}
+
+message IsAliveGrpcResponse {
+    string Name = 1;
+    string Version = 2;
+    // Whether the mail server process of the container is alive.
+    bool MailServerRunning = 3;
+}
+
+service MySmtpSender {
+    rpc SendEmail(SendEmailGrpcRequest) returns (SendEmailGrpcResponse);
+    rpc IsAlive(google.protobuf.Empty) returns (IsAliveGrpcResponse);
+    rpc Ping(google.protobuf.Empty) returns (google.protobuf.Empty);
+}

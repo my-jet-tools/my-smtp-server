@@ -7,6 +7,7 @@ use crate::app::AppContext;
 mod app;
 mod background;
 mod flows;
+mod grpc_server;
 mod http_server;
 mod kumo_mta;
 mod mappers;
@@ -15,6 +16,12 @@ mod models;
 mod scripts;
 mod settings;
 mod smtp_client;
+
+/// The code tonic generates out of proto/MySmtpSender.proto - the module name is the
+/// package of the proto file.
+pub mod my_smtp_sender_grpc {
+    tonic::include_proto!("my_smtp_sender");
+}
 
 pub const SETTINGS_FILE_NAME: &str = "~/.my-smtp-sender";
 
@@ -32,6 +39,8 @@ async fn main() {
     crate::kumo_mta::start_kumo_mta(&app).await;
 
     crate::http_server::setup_server(&app);
+
+    crate::grpc_server::start_grpc_server(&app);
 
     let mut watchdog_timer = MyTimer::new(MAIL_SERVER_WATCHDOG_INTERVAL);
 
