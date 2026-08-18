@@ -602,6 +602,29 @@ mod tests {
     }
 
     #[test]
+    fn test_relay_password_is_redacted() {
+        let mut settings = create_test_settings(false);
+
+        settings.smtp.relay = Some(RelaySettingsModel {
+            host: "smtp.mailgun.org".to_string(),
+            port: Some(2525),
+            user: Some("postmaster@mydomain.com".to_string()),
+            password: Some("super-secret".to_string()),
+        });
+
+        let policy = compile_policy_lua(&settings);
+        assert!(policy.contains("super-secret"));
+
+        let redacted = super::redact_policy_secrets(policy.as_str());
+
+        assert!(!redacted.contains("super-secret"));
+        assert!(redacted.contains("*** hidden ***"));
+        // Everything else has to survive the redaction untouched.
+        assert!(redacted.contains("smtp_auth_plain_username = 'postmaster@mydomain.com'"));
+        assert!(redacted.contains("smtp_port = 2525"));
+    }
+
+    #[test]
     fn test_policy_without_dkim_does_not_sign() {
         let policy = compile_policy_lua(&create_test_settings(false));
 

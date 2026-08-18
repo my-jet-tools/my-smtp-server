@@ -47,7 +47,7 @@ impl McpToolCall<GetMailServerPolicyInputData, GetMailServerPolicyResponse>
         match tokio::fs::read_to_string(POLICY_FILE).await {
             Ok(content) => Ok(GetMailServerPolicyResponse {
                 file_name: POLICY_FILE.to_string(),
-                content,
+                content: redact_policy_secrets(content.as_str()),
             }),
             Err(err) => Err(format!(
                 "Can not read the policy file '{}'. Err: {}",
