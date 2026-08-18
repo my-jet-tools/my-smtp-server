@@ -1,0 +1,28 @@
+# Same image as the Dockerfile next to it, but it compiles the service itself instead of
+# taking a binary which was built outside. Use it to build on a machine which has no rust
+# toolchain - or which is not linux at all:
+#
+#   docker build -f Dockerfile.local -t my-smtp-sender .
+#
+# The release pipeline uses the plain `Dockerfile`: there the binary is built by the github
+# runner and only copied in, which is several minutes faster.
+
+# Bullseye on purpose: its glibc is older than the one of the runtime image, and a binary
+# linked against an older glibc runs on a newer one - not the other way around.
+FROM rust:1-bullseye AS builder
+
+WORKDIR /src
+
+COPY . .
+
+RUN cargo build --release
+
+FROM ghcr.io/kumocorp/kumomta:latest
+
+USER root
+WORKDIR /
+ENV HOME=/root
+
+COPY --from=builder /src/target/release/my-smtp-sender ./target/release/my-smtp-sender
+
+ENTRYPOINT ["./target/release/my-smtp-sender"]
