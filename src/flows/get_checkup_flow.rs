@@ -53,11 +53,21 @@ pub async fn get_checkup(app: &Arc<AppContext>) -> CheckupReport {
     let dns_records = crate::scripts::collect_dkim_dns_records(&settings).await;
 
     for record in dns_records.records.iter() {
-        items.push(check_dkim_record(record).await);
+        let dkim = settings.dkim.iter().find(|dkim| {
+            dkim.domain
+                .trim()
+                .eq_ignore_ascii_case(record.domain.as_str())
+        });
+
+        items.push(check_dkim_record(record, dkim).await);
     }
 
     for error in dns_records.errors.iter() {
         items.push(CheckItem::failed("DKIM key", error.as_str()));
+    }
+
+    for dkim in settings.dkim.iter() {
+        items.push(check_dkim_key_file(dkim).await);
     }
 
     items.push(check_default_sender_is_signed(&settings));
@@ -215,10 +225,24 @@ async fn check_hostname(settings: &SettingsModel, public_ip: Option<IpAddr>) -> 
     result
 }
 
-async fn check_dkim_record(record: &DkimDnsRecord) -> CheckItem {
+async fn check_dkim_record(
+    record: &DkimDnsRecord,
+    dkim: Option<&crate::settings::DkimSettingsModel>,
+) -> CheckItem {
     let title = format!("DKIM record of {}", record.domain);
 
-    let published = match crate::scripts::lookup_txt(record.name.as_str()).await {
+    // A published record which holds another key almost always means the key file is not
+    // on a persistent volume: the service then generates a new key on every start, and
+    // whatever was published becomes stale.
+    let key_file_hint = match dkim {
+        Some(dkim) => format!(
+            " The key is taken from '{}' - if that path is not on a persistent volume, a new key is generated on every restart and the published record goes stale.",
+            dkim.private_key_path.trim()
+        ),
+        None => String::new(),
+    };
+
+    let published = match crate::scripts::lookup_txt_authoritative(record.name.as_str()).await {
         Ok(published) => published,
         Err(err) => {
             return CheckItem::failed(title, err).with_expected(record.value.clone());
@@ -244,7 +268,10 @@ async fn check_dkim_record(record: &DkimDnsRecord) -> CheckItem {
         .with_actual(dkim_record.clone()),
         Some(_) => CheckItem::failed(
             title,
-            format!("'{}' is published, but it holds another public key - the signature can not be verified", record.name),
+            format!(
+                "'{}' is published, but it holds another public key - the signature can not be verified.{}",
+                record.name, key_file_hint
+            ),
         )
         .with_expected(record.value.clone())
         .with_actual(dkim_record.clone()),
@@ -262,14 +289,14 @@ async fn check_spf(domain: &str, public_ip: Option<IpAddr>, settings: &SettingsM
 
     let expected = match (&settings.smtp.relay, public_ip) {
         (Some(relay), _) => format!(
-            "v=spf1 include:{} -all   (the relay documents the exact value to use)",
-            relay.host.trim()
+            "v=spf1 include:{} -all   (a guess - the relay documents the exact include to use, and it is often not its smtp host name)",
+            get_relay_spf_include(relay.host.trim())
         ),
         (None, Some(public_ip)) => format!("v=spf1 ip4:{} -all", public_ip),
         (None, None) => "v=spf1 ip4:{your outgoing ip} -all".to_string(),
     };
 
-    let published = match crate::scripts::lookup_txt(domain).await {
+    let published = match crate::scripts::lookup_txt_authoritative(domain).await {
         Ok(published) => published,
         Err(err) => return CheckItem::failed(title, err).with_expected(expected),
     };
@@ -312,7 +339,7 @@ async fn check_dmarc(domain: &str) -> CheckItem {
     let name = format!("_dmarc.{}", domain);
     let expected = format!("v=DMARC1; p=none; rua=mailto:postmaster@{}", domain);
 
-    let published = match crate::scripts::lookup_txt(name.as_str()).await {
+    let published = match crate::scripts::lookup_txt_authoritative(name.as_str()).await {
         Ok(published) => published,
         Err(err) => {
             return CheckItem::warning(title, err).with_expected(expected);
@@ -335,6 +362,76 @@ async fn check_dmarc(domain: &str) -> CheckItem {
         )
         .with_expected(expected),
     }
+}
+
+/// Where the key comes from, and whether that place survives a restart of the container.
+/// A key which is generated into the container filesystem is a different key after every
+/// restart, and the published dns record is stale from that moment on.
+async fn check_dkim_key_file(dkim: &crate::settings::DkimSettingsModel) -> CheckItem {
+    let title = format!("DKIM key file of {}", dkim.domain);
+    let source_file = dkim.get_private_key_path();
+
+    let source_key = match tokio::fs::read_to_string(source_file.as_str()).await {
+        Ok(source_key) => source_key,
+        Err(err) => {
+            return CheckItem::failed(
+                title,
+                format!(
+                    "'{}' can not be read now, although the mail server was started with a key. It means the key was generated into the filesystem of the container and a NEW one will be generated on the next restart. Mount that path from the host. Err: {}",
+                    source_file, err
+                ),
+            )
+            .with_expected(source_file);
+        }
+    };
+
+    let used_key_file = crate::kumo_mta::get_dkim_private_key_file(dkim);
+
+    let used_key = match tokio::fs::read_to_string(used_key_file.as_str()).await {
+        Ok(used_key) => used_key,
+        Err(err) => {
+            return CheckItem::failed(
+                title,
+                format!(
+                    "The mail server has no key at '{}'. Err: {}",
+                    used_key_file, err
+                ),
+            );
+        }
+    };
+
+    if source_key.trim() != used_key.trim() {
+        return CheckItem::warning(
+            title,
+            format!(
+                "'{}' holds another key than the one the mail server is signing with - it has been changed since the start up. Restart the mail server to apply it",
+                source_file
+            ),
+        )
+        .with_expected(source_file);
+    }
+
+    CheckItem::ok(
+        title,
+        format!(
+            "The mail server signs with the key from '{}'. Make sure that path is mounted from the host, otherwise the next restart generates a new one",
+            source_file
+        ),
+    )
+    .with_actual(source_file)
+}
+
+/// `smtp.mailgun.org` -> `mailgun.org`: the smtp host name of a relay is not what its spf
+/// include is, and the registrable domain is the closest guess which can be made without
+/// knowing the provider.
+fn get_relay_spf_include(relay_host: &str) -> String {
+    let labels: Vec<&str> = relay_host.split('.').collect();
+
+    if labels.len() < 3 {
+        return relay_host.to_string();
+    }
+
+    labels[labels.len() - 2..].join(".")
 }
 
 /// The key is picked by the domain of the From header - a sender whose domain has no key

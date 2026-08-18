@@ -24,7 +24,11 @@ pub async fn lookup_txt(name: &str) -> Result<Vec<String>, String> {
         .await
         .map_err(|err| format!("Can not resolve the TXT of '{}'. Err: {}", name, err))?;
 
-    let result = lookup
+    Ok(read_txt_values(&lookup))
+}
+
+fn read_txt_values(lookup: &hickory_resolver::lookup::Lookup) -> Vec<String> {
+    lookup
         .answers()
         .iter()
         .filter_map(|record| match &record.data {
@@ -39,9 +43,82 @@ pub async fn lookup_txt(name: &str) -> Result<Vec<String>, String> {
             ),
             _ => None,
         })
-        .collect();
+        .collect()
+}
 
-    Ok(result)
+/// The same as [`lookup_txt`], but asked directly of the name servers of the zone, so the
+/// answer is never a cached copy. A record which has just been changed shows up here
+/// immediately, while the resolver of the host can still be holding the old value for the
+/// rest of its ttl - and a check-up which reports a stale value as a failure is worse than
+/// no check-up at all. Falls back to the resolver of the host when the zone can not be
+/// found.
+pub async fn lookup_txt_authoritative(name: &str) -> Result<Vec<String>, String> {
+    let name_servers = match lookup_zone_name_servers(name).await {
+        Ok(name_servers) if !name_servers.is_empty() => name_servers,
+        _ => return lookup_txt(name).await,
+    };
+
+    let config = ResolverConfig::from_parts(
+        None,
+        Vec::new(),
+        name_servers
+            .iter()
+            .map(|ip| NameServerConfig::udp_and_tcp(*ip))
+            .collect(),
+    );
+
+    let resolver =
+        match Resolver::builder_with_config(config, TokioRuntimeProvider::default()).build() {
+            Ok(resolver) => resolver,
+            Err(_) => return lookup_txt(name).await,
+        };
+
+    let lookup = resolver
+        .txt_lookup(to_fqdn(name))
+        .await
+        .map_err(|err| format!("Can not resolve the TXT of '{}'. Err: {}", name, err))?;
+
+    Ok(read_txt_values(&lookup))
+}
+
+/// Walks up the labels of the name until a zone with name servers is found:
+/// 'mail._domainkey.mydomain.com' has none of its own, 'mydomain.com' has.
+async fn lookup_zone_name_servers(name: &str) -> Result<Vec<IpAddr>, String> {
+    let resolver = create_system_resolver()?;
+
+    let name = name.trim().trim_end_matches('.').to_string();
+    let labels: Vec<&str> = name.split('.').collect();
+
+    for skip in 0..labels.len() {
+        let zone = labels[skip..].join(".");
+
+        // Nothing below two labels can hold a zone we care about.
+        if zone.split('.').count() < 2 {
+            break;
+        }
+
+        let Ok(lookup) = resolver.ns_lookup(to_fqdn(zone.as_str())).await else {
+            continue;
+        };
+
+        let mut result = Vec::new();
+
+        for record in lookup.answers().iter() {
+            let RData::NS(ns) = &record.data else {
+                continue;
+            };
+
+            if let Ok(addresses) = lookup_a(ns.to_string().as_str()).await {
+                result.extend(addresses);
+            }
+        }
+
+        if !result.is_empty() {
+            return Ok(result);
+        }
+    }
+
+    Err(format!("Can not find the name servers of '{}'", name))
 }
 
 /// Only the A records: the check which uses it compares them with the ipv4 address the
