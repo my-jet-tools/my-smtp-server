@@ -60,6 +60,8 @@ pub async fn get_checkup(app: &Arc<AppContext>) -> CheckupReport {
         items.push(CheckItem::failed("DKIM key", error.as_str()));
     }
 
+    items.push(check_default_sender_is_signed(&settings));
+
     for domain in get_sending_domains(&settings) {
         items.push(check_spf(domain.as_str(), public_ip, &settings).await);
         items.push(check_dmarc(domain.as_str()).await);
@@ -126,7 +128,7 @@ async fn check_hostname(settings: &SettingsModel, public_ip: Option<IpAddr>) -> 
 
     let mut result = Vec::new();
 
-    let addresses = crate::scripts::lookup_ip(my_hostname.as_str()).await;
+    let addresses = crate::scripts::lookup_a(my_hostname.as_str()).await;
 
     let hostname_item = match &addresses {
         Ok(addresses) => {
@@ -333,6 +335,54 @@ async fn check_dmarc(domain: &str) -> CheckItem {
         )
         .with_expected(expected),
     }
+}
+
+/// The key is picked by the domain of the From header - a sender whose domain has no key
+/// configured goes out unsigned, and nothing anywhere reports it as an error.
+fn check_default_sender_is_signed(settings: &SettingsModel) -> CheckItem {
+    let title = "Default sender is signed";
+    let default_from_email = settings.smtp.default_from_email.trim();
+
+    let Some((_, from_domain)) = default_from_email.split_once('@') else {
+        return CheckItem::failed(
+            title,
+            format!(
+                "'{}' is not an email address, so nothing can be sent with the default sender",
+                default_from_email
+            ),
+        );
+    };
+
+    if settings.dkim.is_empty() {
+        return CheckItem::warning(
+            title,
+            "No dkim key is configured at all - the mail goes out unsigned",
+        );
+    }
+
+    let signed_domains: Vec<String> = settings
+        .dkim
+        .iter()
+        .map(|dkim| dkim.domain.trim().to_lowercase())
+        .collect();
+
+    if signed_domains.contains(&from_domain.to_lowercase()) {
+        return CheckItem::ok(
+            title,
+            format!("The mail from '{}' is dkim signed", default_from_email),
+        )
+        .with_actual(from_domain.to_string());
+    }
+
+    CheckItem::failed(
+        title,
+        format!(
+            "The mail from '{}' goes out UNSIGNED: the key is picked by the domain of the From header, and there is no key for '{}'. Either send from one of the signed domains, or add a key for this one",
+            default_from_email, from_domain
+        ),
+    )
+    .with_expected(format!("a dkim entry with domain: {}", from_domain))
+    .with_actual(format!("keys are configured for: {}", signed_domains.join(", ")))
 }
 
 /// The domains the service signs for - they are the ones whose dns has to be in order.

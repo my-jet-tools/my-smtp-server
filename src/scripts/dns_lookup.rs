@@ -20,7 +20,7 @@ pub async fn lookup_txt(name: &str) -> Result<Vec<String>, String> {
     let resolver = create_system_resolver()?;
 
     let lookup = resolver
-        .txt_lookup(name)
+        .txt_lookup(to_fqdn(name))
         .await
         .map_err(|err| format!("Can not resolve the TXT of '{}'. Err: {}", name, err))?;
 
@@ -44,15 +44,27 @@ pub async fn lookup_txt(name: &str) -> Result<Vec<String>, String> {
     Ok(result)
 }
 
-pub async fn lookup_ip(name: &str) -> Result<Vec<IpAddr>, String> {
+/// Only the A records: the check which uses it compares them with the ipv4 address the
+/// world sees us as, and asking for AAAA as well only produces a confusing error on a host
+/// which has no ipv6 at all.
+pub async fn lookup_a(name: &str) -> Result<Vec<IpAddr>, String> {
     let resolver = create_system_resolver()?;
 
     let lookup = resolver
-        .lookup_ip(name)
+        .ipv4_lookup(to_fqdn(name))
         .await
-        .map_err(|err| format!("Can not resolve the ip address of '{}'. Err: {}", name, err))?;
+        .map_err(|err| format!("Can not resolve the A record of '{}'. Err: {}", name, err))?;
 
-    Ok(lookup.iter().collect())
+    let result = lookup
+        .answers()
+        .iter()
+        .filter_map(|record| match &record.data {
+            RData::A(ip) => Some(IpAddr::V4(ip.0)),
+            _ => None,
+        })
+        .collect();
+
+    Ok(result)
 }
 
 pub async fn lookup_ptr(ip: IpAddr) -> Result<Vec<String>, String> {
@@ -97,6 +109,14 @@ pub async fn lookup_own_public_ip() -> Result<IpAddr, String> {
         Some(ip) => Ok(ip),
         None => Err("The public ip address lookup returned nothing".to_string()),
     }
+}
+
+/// Without the trailing dot the resolver treats the name as relative and walks the `search`
+/// list of /etc/resolv.conf - which on a home connection is the domain of the provider, so
+/// 'mail.mydomain.com' is asked for as 'mail.mydomain.com.provider.net' and resolves to
+/// nothing. Every name this service looks up is absolute.
+fn to_fqdn(name: &str) -> String {
+    format!("{}.", name.trim().trim_end_matches('.'))
 }
 
 fn create_system_resolver() -> Result<TokioResolver, String> {
