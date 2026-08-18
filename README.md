@@ -107,6 +107,26 @@ The smtp port is not published: it is bound to the loopback interface inside the
 and the only client of it is the service itself. The container has to be able to reach the
 port 25 of the whole internet outbound, and to resolve dns.
 
+## The check-up page
+
+`http://{host}:8000/` is a single page which answers one question: is this thing actually able
+to deliver mail. It resolves what is published in dns right now and compares it with what the
+service is configured with:
+
+* the mail server process is alive,
+* the outgoing smtp port is not blocked (or the relay answers),
+* the outgoing ip address, as the recipients see it,
+* the `A` record of `smtp.my_hostname` and the `PTR` record of the outgoing address,
+* the **DKIM** record of every configured key — published, and holding *this* public key,
+* the **SPF** record of every sending domain,
+* the **DMARC** record of every sending domain.
+
+Every item is green, yellow or red, and the ones which are not green carry the exact value to
+publish, with a copy button. When the mail is handed over to a relay, the checks which then
+belong to the relay (PTR, the A record) are yellow rather than red.
+
+The same report is available as json at `/api/checkup/v1/status` and over MCP as `get_checkup`.
+
 ## Api
 
 Swagger is available at `/swagger`.
@@ -171,6 +191,8 @@ claude mcp add --transport http my-smtp-sender http://{host}:8000/mcp
 | `get_mail_server_policy` | The configuration compiled out of the settings, as the mail server got it. |
 | `restart_mail_server` | Applies the changed settings without redeploying the container. |
 | `check_outbound_smtp` | Opens a tcp connection to a mail server and reads its greeting — the way to tell whether the provider blocks the outgoing port 25. |
+| `get_checkup` | The whole check-up in one call: process, port, PTR, SPF, DKIM, DMARC. The first thing to look at when the mail does not arrive. |
+| `get_dkim_dns_records` | The TXT records to publish for the keys the mail server actually signs with. |
 
 Neither the rest api nor the MCP endpoint has any authentication: the service is meant to sit
 in a private network. Do not expose the port 8000 to the internet.

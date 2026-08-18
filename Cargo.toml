@@ -37,6 +37,12 @@ lettre = { version = "*", default-features = false, features = [
 
 base64 = "*"
 
+# Used to generate the dkim key when the settings point at a file which is not there yet.
+rsa = { version = "*", features = ["pem"] }
+
+# Used by the check-up page to read what is actually published in dns.
+hickory-resolver = "*"
+
 tokio = { version = "*", features = ["full"] }
 
 serde = { version = "*", features = ["derive"] }

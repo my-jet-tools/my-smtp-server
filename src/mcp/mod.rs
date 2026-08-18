@@ -1,5 +1,7 @@
 mod build_mcp_middleware;
 mod check_outbound_smtp_tool_call;
+mod get_checkup_tool_call;
+mod get_dkim_dns_records_tool_call;
 mod get_mail_server_output_tool_call;
 mod get_mail_server_policy_tool_call;
 mod get_mail_server_status_tool_call;
@@ -8,6 +10,8 @@ mod send_email_tool_call;
 
 pub use build_mcp_middleware::*;
 pub use check_outbound_smtp_tool_call::*;
+pub use get_checkup_tool_call::*;
+pub use get_dkim_dns_records_tool_call::*;
 pub use get_mail_server_output_tool_call::*;
 pub use get_mail_server_policy_tool_call::*;
 pub use get_mail_server_status_tool_call::*;

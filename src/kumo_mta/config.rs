@@ -291,22 +291,7 @@ pub async fn write_kumo_mta_config(settings: &SettingsModel) -> Result<(), Strin
 async fn copy_dkim_private_key(dkim: &DkimSettingsModel) -> Result<(), String> {
     let source_file = dkim.get_private_key_path();
 
-    let private_key = match tokio::fs::read_to_string(source_file.as_str()).await {
-        Ok(private_key) => private_key,
-        Err(err) => {
-            return Err(format!(
-                "Can not read the dkim private key of the domain '{}' from the file '{}'. Err: {}",
-                dkim.domain, source_file, err
-            ));
-        }
-    };
-
-    if private_key.trim().is_empty() {
-        return Err(format!(
-            "The dkim private key file '{}' of the domain '{}' is empty",
-            source_file, dkim.domain
-        ));
-    }
+    let private_key = read_or_generate_dkim_private_key(dkim, source_file.as_str()).await?;
 
     create_directory(get_dkim_keys_directory(dkim).as_str()).await?;
 
@@ -330,6 +315,101 @@ async fn copy_dkim_private_key(dkim: &DkimSettingsModel) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// A file which is not there yet, or which is there but empty - `touch key.pem` before the
+/// first start, so that docker mounts a file and not a directory - means "generate it for
+/// me": the key is created and written back to the very path the settings point at, so the
+/// next start finds it and nothing is regenerated.
+async fn read_or_generate_dkim_private_key(
+    dkim: &DkimSettingsModel,
+    source_file: &str,
+) -> Result<String, String> {
+    match tokio::fs::read_to_string(source_file).await {
+        Ok(private_key) => {
+            if !private_key.trim().is_empty() {
+                return Ok(private_key);
+            }
+        }
+        Err(err) => {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!(
+                    "Can not read the dkim private key of the domain '{}' from the file '{}'. Err: {}",
+                    dkim.domain, source_file, err
+                ));
+            }
+        }
+    }
+
+    let private_key = crate::scripts::generate_dkim_private_key().await?;
+
+    if let Some((directory, _)) = source_file.rsplit_once('/') {
+        create_directory(directory).await?;
+    }
+
+    if let Err(err) = tokio::fs::write(source_file, private_key.as_str()).await {
+        return Err(format!(
+            "The dkim private key of the domain '{}' has to be generated, but the file '{}' can not be written. Is the directory mounted read only? Err: {}",
+            dkim.domain, source_file, err
+        ));
+    }
+
+    if let Err(err) =
+        tokio::fs::set_permissions(source_file, std::fs::Permissions::from_mode(0o600)).await
+    {
+        return Err(format!(
+            "Can not set permissions of the file '{}'. Err: {}",
+            source_file, err
+        ));
+    }
+
+    report_generated_dkim_key(dkim, source_file, private_key.as_str());
+
+    Ok(private_key)
+}
+
+/// A key nobody published in dns is worse than no key at all: the mail goes out signed and
+/// every recipient fails to verify it. So the record to publish is printed as loudly as the
+/// service can print it.
+fn report_generated_dkim_key(dkim: &DkimSettingsModel, source_file: &str, private_key: &str) {
+    let record = match crate::scripts::compile_dkim_dns_record(
+        &dkim.domain,
+        &dkim.selector,
+        private_key,
+    ) {
+        Ok(record) => record,
+        Err(err) => {
+            my_logger::LOGGER.write_error(
+                    "read_or_generate_dkim_private_key",
+                    format!(
+                        "The dkim key of the domain '{}' is generated, but its dns record can not be compiled. Err: {}",
+                        dkim.domain, err
+                    ),
+                    my_logger::LogEventCtx::new(),
+                );
+            return;
+        }
+    };
+
+    println!("--------------------------------------------------------------------------");
+    println!(
+        "A new dkim key of the domain '{}' is generated into '{}'.",
+        dkim.domain, source_file
+    );
+    println!("Publish this dns record, otherwise the signature can not be verified:");
+    println!("  name:  {}", record.name);
+    println!("  type:  TXT");
+    println!("  value: {}", record.value);
+    println!("--------------------------------------------------------------------------");
+
+    my_logger::LOGGER.write_warning(
+        "read_or_generate_dkim_private_key",
+        format!(
+            "A new dkim key is generated for the domain '{}'. Until the TXT record '{}' is published, the mail is signed with a key which can not be verified",
+            dkim.domain, record.name
+        ),
+        my_logger::LogEventCtx::new(),
+    );
 }
 
 async fn change_owner_to_kumod(path: &str) -> Result<(), String> {

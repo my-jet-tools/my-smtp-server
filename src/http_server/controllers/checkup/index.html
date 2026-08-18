@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{APP_NAME}} — check up</title>
+    <style>
+      :root {
+        --bg: #14161a;
+        --panel: #1c1f26;
+        --panel-2: #232733;
+        --text: #e7e9ee;
+        --muted: #9aa3b2;
+        --line: #2c313c;
+        --ok: #3fb950;
+        --warning: #d29922;
+        --failed: #f85149;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      .wrap { max-width: 1000px; margin: 0 auto; padding: 32px 20px 64px; }
+
+      header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      h1 { font-size: 20px; margin: 0; font-weight: 600; }
+      .version { color: var(--muted); font-size: 12px; }
+
+      .summary {
+        margin: 20px 0 24px;
+        padding: 16px 18px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+
+      .summary .headline { font-size: 16px; font-weight: 600; }
+      .summary .ip { color: var(--muted); font-size: 13px; }
+      .summary.ok { border-left: 4px solid var(--ok); }
+      .summary.warning { border-left: 4px solid var(--warning); }
+      .summary.failed { border-left: 4px solid var(--failed); }
+
+      button {
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 7px 14px;
+        cursor: pointer;
+        font: inherit;
+      }
+      button:hover { border-color: #3d4551; background: #2a2f3b; }
+      button:disabled { opacity: .55; cursor: default; }
+
+      .item {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+      }
+
+      .item-head { display: flex; align-items: center; gap: 10px; }
+      .title { font-weight: 600; }
+
+      .badge {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        padding: 3px 8px;
+        border-radius: 999px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .badge.ok { background: rgba(63,185,80,.15); color: var(--ok); }
+      .badge.warning { background: rgba(210,153,34,.15); color: var(--warning); }
+      .badge.failed { background: rgba(248,81,73,.15); color: var(--failed); }
+
+      .message { color: var(--muted); margin-top: 6px; }
+
+      .kv { margin-top: 10px; }
+      .kv-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 6px; }
+      .kv-label { color: var(--muted); min-width: 72px; font-size: 12px; padding-top: 7px; }
+
+      code {
+        display: block;
+        flex: 1;
+        background: #101318;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .copy { align-self: flex-start; margin-top: 1px; }
+      .muted { color: var(--muted); }
+      .error { color: var(--failed); }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>{{APP_NAME}}</h1>
+        <span class="version">v{{APP_VERSION}}</span>
+      </header>
+
+      <div id="summary" class="summary">
+        <span class="headline">Checking…</span>
+      </div>
+
+      <div id="items"></div>
+    </div>
+
+    <script>
+      const HEADLINE = {
+        ok: "Everything the delivery depends on is in place",
+        warning: "It works, but something needs attention",
+        failed: "The mail will not be delivered until this is fixed",
+      };
+
+      async function load() {
+        const button = document.getElementById("refresh");
+        if (button) { button.disabled = true; button.textContent = "Checking…"; }
+
+        try {
+          const response = await fetch("/api/checkup/v1/status");
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          render(await response.json());
+        } catch (err) {
+          document.getElementById("summary").className = "summary failed";
+          document.getElementById("summary").innerHTML =
+            '<span class="headline error">Can not read the status: ' + escapeHtml(String(err)) + "</span>";
+        }
+      }
+
+      function render(report) {
+        const summary = document.getElementById("summary");
+        summary.className = "summary " + report.status;
+        summary.innerHTML =
+          '<span class="headline">' + HEADLINE[report.status] + "</span>" +
+          (report.public_ip ? '<span class="ip">outgoing ip: ' + escapeHtml(report.public_ip) + "</span>" : "") +
+          '<span style="flex:1"></span>' +
+          '<button id="refresh">Check again</button>';
+        document.getElementById("refresh").addEventListener("click", load);
+
+        const container = document.getElementById("items");
+        container.innerHTML = "";
+
+        for (const item of report.items) {
+          const el = document.createElement("div");
+          el.className = "item";
+
+          let html =
+            '<div class="item-head">' +
+            '<span class="badge ' + item.status + '">' + item.status + "</span>" +
+            '<span class="title">' + escapeHtml(item.title) + "</span>" +
+            "</div>" +
+            '<div class="message">' + escapeHtml(item.message) + "</div>";
+
+          if (item.expected || item.actual) {
+            html += '<div class="kv">';
+            if (item.expected) html += kvRow("publish", item.expected, true);
+            if (item.actual) html += kvRow("current", item.actual, false);
+            html += "</div>";
+          }
+
+          el.innerHTML = html;
+          container.appendChild(el);
+        }
+
+        for (const button of container.querySelectorAll("[data-copy]")) {
+          button.addEventListener("click", () => {
+            navigator.clipboard.writeText(button.getAttribute("data-copy")).then(() => {
+              const old = button.textContent;
+              button.textContent = "copied";
+              setTimeout(() => (button.textContent = old), 1200);
+            });
+          });
+        }
+      }
+
+      function kvRow(label, value, withCopy) {
+        return (
+          '<div class="kv-row">' +
+          '<span class="kv-label">' + label + "</span>" +
+          "<code>" + escapeHtml(value) + "</code>" +
+          (withCopy ? '<button class="copy" data-copy="' + escapeHtml(value) + '">copy</button>' : "") +
+          "</div>"
+        );
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      load();
+    </script>
+  </body>
+</html>

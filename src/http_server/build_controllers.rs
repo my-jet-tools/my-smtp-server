@@ -19,5 +19,13 @@ pub fn build_controllers(app: &Arc<AppContext>) -> ControllersMiddleware {
         super::controllers::monitoring::IsAliveAction::new(app.clone()),
     ));
 
+    result.register_get_action(Arc::new(
+        super::controllers::checkup::GetCheckupAction::new(app.clone()),
+    ));
+
+    result.register_get_action(Arc::new(super::controllers::checkup::IndexAction::new(
+        app.clone(),
+    )));
+
     result
 }
