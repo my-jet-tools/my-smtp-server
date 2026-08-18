@@ -14,21 +14,24 @@ impl SmtpSubmitResult {
     }
 }
 
-/// Postfix answers with `250 2.0.0 Ok: queued as 4bTgZ12Rz3zP` - the last token is the queue id.
+/// KumoMTA answers with `OK ids=303b51a79b1711f1b81beaf9a57beb6c`, other mail servers with
+/// `250 2.0.0 Ok: queued as 4bTgZ12Rz3zP` - both forms carry the id of the message.
 fn extract_queue_id(smtp_response: &str) -> Option<String> {
-    const QUEUED_AS: &str = "queued as ";
+    for prefix in ["ids=", "queued as "] {
+        let Some(index) = smtp_response.find(prefix) else {
+            continue;
+        };
 
-    let index = smtp_response.find(QUEUED_AS)?;
+        let queue_id = smtp_response[index + prefix.len()..]
+            .split_whitespace()
+            .next()?;
 
-    let queue_id = smtp_response[index + QUEUED_AS.len()..]
-        .split_whitespace()
-        .next()?;
-
-    if queue_id.is_empty() {
-        return None;
+        if !queue_id.is_empty() {
+            return Some(queue_id.to_string());
+        }
     }
 
-    Some(queue_id.to_string())
+    None
 }
 
 #[cfg(test)]
@@ -39,6 +42,12 @@ mod tests {
     fn test_queue_id_is_extracted() {
         let result = extract_queue_id("2.0.0 Ok: queued as 4bTgZ12Rz3zP");
         assert_eq!(result.unwrap().as_str(), "4bTgZ12Rz3zP");
+    }
+
+    #[test]
+    fn test_kumo_mta_queue_id_is_extracted() {
+        let result = extract_queue_id("OK ids=303b51a79b1711f1b81beaf9a57beb6c");
+        assert_eq!(result.unwrap().as_str(), "303b51a79b1711f1b81beaf9a57beb6c");
     }
 
     #[test]

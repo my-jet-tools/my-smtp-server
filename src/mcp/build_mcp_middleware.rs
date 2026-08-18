@@ -27,6 +27,7 @@ pub fn build_mcp_middleware(app: &Arc<AppContext>) -> McpMiddleware {
     mcp.register_tool_call(Arc::new(CheckOutboundSmtpHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GetDkimDnsRecordsHandler::new(app.clone())));
     mcp.register_tool_call(Arc::new(GetCheckupHandler::new(app.clone())));
+    mcp.register_tool_call(Arc::new(GetDeliveryLogHandler::new(app.clone())));
 
     mcp
 }

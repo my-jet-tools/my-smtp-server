@@ -43,6 +43,9 @@ rsa = { version = "*", features = ["pem"] }
 # Used by the check-up page to read what is actually published in dns.
 hickory-resolver = "*"
 
+# The mail server writes its delivery log as zstd compressed segments.
+zstd = "*"
+
 tokio = { version = "*", features = ["full"] }
 
 serde = { version = "*", features = ["derive"] }
