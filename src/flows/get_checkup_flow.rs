@@ -98,7 +98,7 @@ async fn check_mail_server(app: &Arc<AppContext>) -> CheckItem {
 }
 
 async fn check_outbound_smtp(settings: &SettingsModel) -> CheckItem {
-    let (host, port, title) = match &settings.smtp.relay {
+    let (host, port, title) = match &settings.relay {
         Some(relay) => (
             relay.host.trim().to_string(),
             relay.get_port(),
@@ -134,7 +134,7 @@ async fn check_hostname(settings: &SettingsModel, public_ip: Option<IpAddr>) -> 
 
     // With a relay the last hop is made by somebody else, and the PTR/A pair of this host
     // is not what the recipients look at.
-    let matters = settings.smtp.relay.is_none();
+    let matters = settings.relay.is_none();
 
     let mut result = Vec::new();
 
@@ -287,7 +287,7 @@ async fn check_dkim_record(
 async fn check_spf(domain: &str, public_ip: Option<IpAddr>, settings: &SettingsModel) -> CheckItem {
     let title = format!("SPF record of {}", domain);
 
-    let expected = match (&settings.smtp.relay, public_ip) {
+    let expected = match (&settings.relay, public_ip) {
         (Some(relay), _) => format!(
             "v=spf1 include:{} -all   (a guess - the relay documents the exact include to use, and it is often not its smtp host name)",
             get_relay_spf_include(relay.host.trim())
@@ -314,7 +314,7 @@ async fn check_spf(domain: &str, public_ip: Option<IpAddr>, settings: &SettingsM
 
     // A full SPF evaluation would mean following every include - what is checked here is
     // only whether the record can possibly cover this sender.
-    if settings.smtp.relay.is_none()
+    if settings.relay.is_none()
         && let Some(public_ip) = public_ip
         && !spf_record.contains(&format!("ip4:{}", public_ip))
         && !spf_record.contains(&format!("ip6:{}", public_ip))

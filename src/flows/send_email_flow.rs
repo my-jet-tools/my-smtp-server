@@ -17,7 +17,7 @@ pub async fn send_email(
         .settings_reader
         .use_settings(|settings| {
             (
-                settings.smtp.relay.is_some(),
+                settings.relay.is_some(),
                 settings.mailgun_http.clone(),
                 settings.get_default_delivery_mode(),
             )

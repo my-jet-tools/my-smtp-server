@@ -75,7 +75,6 @@ impl McpToolCall<GetMailServerStatusInputData, GetMailServerStatusResponse>
             dkim_domains,
             my_hostname: settings.smtp.my_hostname.clone(),
             relay_host: settings
-                .smtp
                 .relay
                 .as_ref()
                 .map(|relay| format!("{}:{}", relay.host, relay.get_port())),

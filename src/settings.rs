@@ -2,18 +2,29 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::DeliveryMode;
 
+/// `deny_unknown_fields` is deliberate: a key which is indented one level off - `relay`
+/// under `smtp`, say - would otherwise be silently ignored, and the mail would quietly take
+/// another route. Better to refuse to start and name the key.
 #[derive(my_settings_reader::SettingsModel, Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SettingsModel {
     pub smtp: SmtpSettingsModel,
     #[serde(default)]
     pub dkim: Vec<DkimSettingsModel>,
-    /// Optional. The http api of mailgun as an alternative route: it goes over 443, which
-    /// no provider blocks, unlike the smtp ports.
+    /// Optional. When it is set - the mail is not delivered to the mail server of the
+    /// recipient directly, but handed over to this smtp server. Needed when the outgoing
+    /// ip address has no proper PTR record or the provider blocks the outgoing port 25 -
+    /// a home connection, for example.
+    #[serde(default)]
+    pub relay: Option<RelaySettingsModel>,
+    /// Optional. The http api of mailgun as another route: it goes over 443, which no
+    /// provider blocks, unlike the smtp ports.
     #[serde(default)]
     pub mailgun_http: Option<MailgunHttpSettingsModel>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MailgunHttpSettingsModel {
     /// The api key of the account - NOT the smtp password, they are different secrets.
     pub api_key: String,
@@ -55,6 +66,7 @@ impl MailgunHttpSettingsModel {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SmtpSettingsModel {
     /// Host name the mail server introduces itself with (HELO/EHLO). Must have a matching
     /// A and PTR record, otherwise the recipient mail servers reject the mail.
@@ -72,16 +84,10 @@ pub struct SmtpSettingsModel {
     /// How long the mail server keeps retrying the delivery before it gives up.
     #[serde(default)]
     pub max_queue_lifetime_hours: Option<u64>,
-
-    /// Optional. When it is set - the mail is not delivered to the mail server of the
-    /// recipient directly, but handed over to this smtp server. Needed when the outgoing
-    /// ip address has no proper PTR record or the provider blocks the outgoing port 25 -
-    /// a home connection, for example.
-    #[serde(default)]
-    pub relay: Option<RelaySettingsModel>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct RelaySettingsModel {
     pub host: String,
 
@@ -96,6 +102,7 @@ pub struct RelaySettingsModel {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct DkimSettingsModel {
     pub domain: String,
     pub selector: String,
@@ -132,7 +139,7 @@ impl SettingsModel {
             return DeliveryMode::MailgunHttp;
         }
 
-        if self.smtp.relay.is_some() {
+        if self.relay.is_some() {
             return DeliveryMode::Relay;
         }
 

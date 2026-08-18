@@ -41,15 +41,15 @@ smtp:
   message_size_limit_mb: 25
   # How long the mail server keeps retrying before it gives up.
   max_queue_lifetime_hours: 24
-  # Optional. Without it the mail is delivered to the mail server of the recipient
-  # directly - which requires a public ip address with a matching PTR record and an
-  # outgoing port 25 which is not blocked by the provider. When the relay is set, the
-  # mail is handed over to it instead and it does the delivery.
-  relay:
-    host: smtp.mailgun.org
-    port: 587
-    user: postmaster@mydomain.com
-    password: ...
+
+# Optional. An smtp server the mail is handed over to instead of being delivered to the
+# mail server of the recipient. Needed when the outgoing ip address has no matching PTR
+# record, or when the provider blocks the outgoing port 25 - a home connection, say.
+relay:
+  host: smtp.eu.mailgun.org
+  port: 2525
+  user: postmaster@mydomain.com
+  password: ...
 
 # Optional. The http api of mailgun - it goes over the port 443, which no provider blocks,
 # unlike the smtp ports. The api key is NOT the smtp password - it is another secret from
@@ -72,7 +72,7 @@ dkim:
 **Which route the mail takes** is decided by which section is present, so the same choice is
 never spelled out in two places:
 
-| `mailgun_http` | `smtp.relay` | route |
+| `mailgun_http` | `relay` | route |
 |---|---|---|
 | set | — | the http api of mailgun |
 | — | set | the relay, over smtp |

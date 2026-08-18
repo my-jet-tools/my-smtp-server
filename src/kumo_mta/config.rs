@@ -95,7 +95,7 @@ pub fn compile_policy_lua(settings: &SettingsModel) -> String {
     result.push_str(compile_message_received_handler(settings).as_str());
 
     result.push_str(compile_queue_config_handler(smtp).as_str());
-    result.push_str(compile_egress_path_handler(smtp).as_str());
+    result.push_str(compile_egress_path_handler(settings).as_str());
 
     result
 }
@@ -125,8 +125,8 @@ fn compile_queue_config_handler(smtp: &SmtpSettingsModel) -> String {
     result
 }
 
-fn compile_egress_path_handler(smtp: &SmtpSettingsModel) -> String {
-    let ehlo_domain = escape_lua_string(smtp.my_hostname.trim());
+fn compile_egress_path_handler(settings: &SettingsModel) -> String {
+    let ehlo_domain = escape_lua_string(settings.smtp.my_hostname.trim());
 
     let mut result = String::new();
 
@@ -137,7 +137,7 @@ fn compile_egress_path_handler(smtp: &SmtpSettingsModel) -> String {
         "kumo.on('get_egress_path_config', function(routing_domain, egress_source, site_name)\n",
     );
 
-    if let Some(relay) = &smtp.relay {
+    if let Some(relay) = &settings.relay {
         let relay_host = escape_lua_string(relay.host.trim());
 
         result.push_str(
@@ -254,7 +254,7 @@ fn compile_dkim_keys_table(dkim_settings: &[DkimSettingsModel]) -> String {
 /// server of the recipient.
 fn compile_message_received_handler(settings: &SettingsModel) -> String {
     let dkim_signing = compile_dkim_signing(&settings.dkim);
-    let relay_routing = compile_relay_routing(settings.smtp.relay.as_ref());
+    let relay_routing = compile_relay_routing(settings.relay.as_ref());
 
     if dkim_signing.is_empty() && relay_routing.is_empty() {
         return String::new();
@@ -570,13 +570,13 @@ mod tests {
     fn create_test_settings(with_dkim: bool) -> SettingsModel {
         SettingsModel {
             mailgun_http: None,
+            relay: None,
             smtp: SmtpSettingsModel {
                 my_hostname: "mail.mydomain.com".to_string(),
                 default_from_email: "no-reply@mydomain.com".to_string(),
                 default_from_name: Some("My Service".to_string()),
                 message_size_limit_mb: Some(25),
                 max_queue_lifetime_hours: Some(24),
-                relay: None,
             },
             dkim: if with_dkim {
                 vec![DkimSettingsModel {
@@ -617,7 +617,7 @@ mod tests {
     fn test_policy_with_relay_routes_everything_to_it() {
         let mut settings = create_test_settings(false);
 
-        settings.smtp.relay = Some(RelaySettingsModel {
+        settings.relay = Some(RelaySettingsModel {
             host: "smtp.mailgun.org".to_string(),
             port: Some(587),
             user: Some("postmaster@mydomain.com".to_string()),
@@ -651,7 +651,7 @@ mod tests {
     fn test_delivery_mode_header_is_read_before_the_signature() {
         let mut settings = create_test_settings(true);
 
-        settings.smtp.relay = Some(RelaySettingsModel {
+        settings.relay = Some(RelaySettingsModel {
             host: "smtp.mailgun.org".to_string(),
             port: None,
             user: None,
@@ -677,7 +677,7 @@ mod tests {
     fn test_relay_password_is_redacted() {
         let mut settings = create_test_settings(false);
 
-        settings.smtp.relay = Some(RelaySettingsModel {
+        settings.relay = Some(RelaySettingsModel {
             host: "smtp.mailgun.org".to_string(),
             port: Some(2525),
             user: Some("postmaster@mydomain.com".to_string()),
